@@ -1,0 +1,25 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# XcodeGen-generated artifacts (reproducible from project.yml)
+*.xcodeproj/
+AQRScanner/Generated-Info.plist
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Misc
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM

@@ -1,0 +1,61 @@
+# XcodeGen project definition for AQR Transfer.
+#
+# Generate the .xcodeproj with:
+#     brew install xcodegen     # one-time, if not already installed
+#     cd /path/to/qrtransfer
+#     xcodegen generate
+#     open AQRScanner.xcodeproj
+#
+# Re-run `xcodegen generate` any time you add/remove source files or change
+# settings here. The .xcodeproj is disposable and git-ignored.
+
+name: AQRScanner
+
+options:
+  bundleIdPrefix: com.tj.aqr
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    # Set this to your Apple Developer Team ID to enable automatic signing
+    # without touching it in Xcode. Find it at developer.apple.com → Membership,
+    # or just leave it blank and pick your team in Xcode's Signing tab once.
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  AQRScanner:
+    type: application
+    platform: iOS
+    sources:
+      # Pull in the Swift sources but NOT the hand-written Info.plist — XcodeGen
+      # generates the Info.plist from the `info:` block below, and compiling a
+      # second plist as a resource causes duplicate-key / signing oddities.
+      - path: AQRScanner
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tj.aqr.AQRScanner
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"          # iPhone only (use "1,2" for iPad too)
+        CODE_SIGN_STYLE: Automatic
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    info:
+      path: AQRScanner/Generated-Info.plist
+      properties:
+        # REQUIRED — the app crashes on camera access without this key.
+        NSCameraUsageDescription: "AQR Transfer uses the camera to scan animated QR codes from your computer screen and reassemble the original file."
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # iPad orientations (harmless if iPhone-only; remove if you like)
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight

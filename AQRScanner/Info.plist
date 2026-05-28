@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- REQUIRED: without this key the app crashes the instant it accesses the
+         camera. The string is shown in the iOS permission prompt. -->
+    <key>NSCameraUsageDescription</key>
+    <string>AQR Transfer uses the camera to scan animated QR codes from your computer screen and reassemble the original file.</string>
+
+    <key>UILaunchScreen</key>
+    <dict/>
+
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+</dict>
+</plist>
