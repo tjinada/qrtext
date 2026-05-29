@@ -1,21 +1,25 @@
 import Foundation
 import Combine
 
-/// Receives AQR1 frames as they stream in from the scanner, dedupes them by
-/// chunk index, verifies per-chunk and whole-file integrity, and rebuilds the
-/// original file. This is a direct port of handleQrDecoded() + rebuildTransfer()
-/// from the web app (app.debug4.js), expressed as observable state for SwiftUI.
+/// Receives AQR2 frames as they stream in from the scanner, feeds them to the
+/// LT decoder, and once enough have been collected, reconstructs and verifies
+/// the original file.
+///
+/// This is the AQR2/fountain-codes port of handleQrDecoded() + rebuildTransfer()
+/// from the web app (app.debug4.js, debug9), expressed as observable state for
+/// SwiftUI.
 @MainActor
 final class TransferReceiver: ObservableObject {
 
     // Published UI state
-    @Published var total = 0
-    @Published var receivedCount = 0
+    @Published var K = 0
+    @Published var resolvedCount = 0
+    @Published var framesSeen = 0
+    @Published var pendingEquations = 0
     @Published var fileName = ""
     @Published var statusText = "Waiting for frames…"
     @Published var isComplete = false
     @Published var rebuiltURL: URL?            // drives the share sheet
-    @Published var missingIndices: [Int] = []
     @Published var rebuiltText: String?        // populated for text payloads
 
     // Internal transfer state
@@ -24,77 +28,97 @@ final class TransferReceiver: ObservableObject {
     private var alg = "raw"
     private var mime = ""
     private var name = ""
-    private var received: [Int: String] = [:]  // index -> base64url chunk
+    private var decoder: LTDecoder?
     private var lastDecoded = ""
 
     /// Feed a raw decoded QR string. Safe to call many times per second with
     /// repeats — duplicates are cheaply ignored.
     func ingest(_ text: String) {
+        // Cheap dedupe: VisionKit's didUpdate fires every frame the same payload
+        // is visible, so the same frame text comes in repeatedly. Skipping here
+        // saves us from running the LT-reduction loop on identical equations.
         guard text != lastDecoded else { return }
         lastDecoded = text
 
-        guard let f = FrameParser.parse(text) else { return }
+        guard let frame = FrameParser.parse(text) else { return }
 
         // A new transfer id means a fresh file — reset and adopt its metadata.
-        if activeId != f.id {
+        if activeId != frame.id {
             reset()
-            activeId = f.id
-            total = f.total
-            name = f.name
-            fileName = f.name
-            mime = f.mime
-            alg = f.alg
-            fileHash = f.fileHash
-            statusText = "Receiving \(f.name)…"
+            activeId = frame.id
+            K = frame.K
+            name = frame.name
+            fileName = frame.name
+            mime = frame.mime
+            alg = frame.alg
+            fileHash = frame.fileHash
+
+            // Block size has to be inferred from the first frame's xor payload
+            // (the encoder doesn't include it explicitly — it's deterministic
+            // given the payload bytes and K, but reconstructing that calculation
+            // on the receiver is more brittle than just looking at the bytes
+            // we've actually received).
+            guard let firstXor = FrameParser.base64urlDecode(frame.xorB64) else {
+                statusText = "First frame's payload was not valid base64url."
+                Haptics.failure()
+                return
+            }
+            decoder = LTDecoder(
+                K: frame.K,
+                blockSize: firstXor.count,
+                totalBytes: frame.totalBytes
+            )
+            statusText = "Receiving \(frame.name)…"
         }
 
-        guard f.id == activeId else { return }
-        guard received[f.index] == nil else { return }   // already have this chunk
+        guard frame.id == activeId, let decoder = decoder else { return }
 
-        // Per-chunk integrity: first 16 hex chars of SHA-256, same as the web app.
-        let computed = String(FrameParser.sha256Hex(f.data).prefix(16))
-        guard computed == f.chunkHash else { return }     // garbled scan, drop it
+        guard let xor = FrameParser.base64urlDecode(frame.xorB64) else {
+            // One garbled frame is normal — just drop it; the LT decoder will
+            // converge from other frames.
+            return
+        }
 
-        received[f.index] = f.data
-        receivedCount = received.count
-        recomputeMissing()
-        Haptics.tick()
+        // Sanity: payload length should match the established block size. If
+        // it doesn't, something is very wrong (frame from a different transfer
+        // with a recycled id, or wire corruption that snuck past the QR ECC).
+        guard xor.count == decoder.blockSize else { return }
 
-        if received.count == total {
+        let contributed = decoder.addEquation(seed: frame.seed, xorPayload: xor)
+        framesSeen = decoder.equationsSeen
+        resolvedCount = decoder.resolvedCount
+        pendingEquations = decoder.pendingCount
+
+        if contributed {
+            Haptics.tick()
+        }
+
+        if decoder.isComplete {
             rebuild()
         }
     }
 
-    private func recomputeMissing() {
-        guard total > 0 else { missingIndices = []; return }
-        missingIndices = (0..<total).filter { received[$0] == nil }
-    }
-
     private func rebuild() {
-        // Reassemble in index order, then base64url-decode the whole payload.
-        let joined = (0..<total).compactMap { received[$0] }.joined()
-        guard let rawDecoded = FrameParser.base64urlDecode(joined) else {
-            statusText = "Decode error. Reset and rescan."
+        guard let decoder = decoder, decoder.isComplete else { return }
+        guard var bytes = decoder.rebuild() else {
+            statusText = "Decoder reported complete but rebuild returned nil."
             Haptics.failure()
             return
         }
 
-        let bytes: Data
         if alg == "gzip" {
             do {
-                bytes = try Gzip.gunzip(rawDecoded)
+                bytes = try Gzip.gunzip(bytes)
             } catch {
                 statusText = "Gunzip failed: \(error). Reset and rescan."
                 Haptics.failure()
                 return
             }
-        } else {
-            bytes = rawDecoded
         }
 
         // Whole-file integrity check.
         guard FrameParser.sha256Hex(bytes) == fileHash else {
-            statusText = "Checksum failed. Keep scanning or reset."
+            statusText = "Checksum failed. Reset and rescan."
             Haptics.failure()
             return
         }
@@ -129,9 +153,11 @@ final class TransferReceiver: ObservableObject {
     }
 
     func reset() {
-        received.removeAll()
-        receivedCount = 0
-        total = 0
+        decoder = nil
+        K = 0
+        resolvedCount = 0
+        framesSeen = 0
+        pendingEquations = 0
         activeId = nil
         fileHash = ""
         alg = "raw"
@@ -139,7 +165,6 @@ final class TransferReceiver: ObservableObject {
         name = ""
         fileName = ""
         lastDecoded = ""
-        missingIndices = []
         rebuiltURL = nil
         rebuiltText = nil
         isComplete = false

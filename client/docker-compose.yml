@@ -1,0 +1,7 @@
+services:
+  animated-qr-transfer:
+    build: .
+    container_name: animated-qr-transfer
+    ports:
+      - "8099:80"
+    restart: unless-stopped

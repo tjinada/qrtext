@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Animated QR Transfer</title>
+  <link rel="stylesheet" href="styles.css?v=debug10" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <div>
+        <h1>Animated QR Transfer</h1>
+        <p>Turn text or files into looping QR frames, then scan them back into the original file.</p>
+      </div>
+      <div class="badge">MVP · debug10 · AQR2/LT</div>
+    </header>
+
+    <nav class="tabs" aria-label="Main tabs">
+      <button class="tab active" data-tab="encode">Encode</button>
+      <button class="tab" data-tab="decode">Decode</button>
+    </nav>
+
+    <section id="encode" class="panel active">
+      <div class="grid two">
+        <section class="card">
+          <h2>1. Input</h2>
+          <label class="field-label" for="fileInput">Upload file</label>
+          <input id="fileInput" type="file" />
+
+          <label class="field-label" for="fileName">Filename</label>
+          <input id="fileName" type="text" placeholder="example.ts" />
+
+          <label class="field-label" for="textInput">Or paste text/code</label>
+          <textarea id="textInput" placeholder="Paste TypeScript, JSON, XML, CSS, HTML, logs, config, etc."></textarea>
+        </section>
+
+        <section class="card">
+          <h2>2. Options</h2>
+          <div class="option-row">
+            <label for="chunkSize">K (source blocks)</label>
+            <select id="chunkSize">
+              <option value="8">8 — very dense QR, tiny file only</option>
+              <option value="16">16 — dense</option>
+              <option value="24" selected>24 — balanced (recommended)</option>
+              <option value="32">32 — looser, easier to scan</option>
+              <option value="48">48 — small QR, more frames</option>
+              <option value="64">64 — smallest QR per frame</option>
+            </select>
+          </div>
+
+          <div class="option-row">
+            <label for="fps">Animation speed</label>
+            <select id="fps">
+              <option value="1" selected>1 FPS - safest</option>
+              <option value="2">2 FPS</option>
+              <option value="3">3 FPS</option>
+              <option value="4">4 FPS</option>
+            </select>
+          </div>
+
+          <div class="option-row">
+            <label for="frameHold">Repeat each frame</label>
+            <select id="frameHold">
+              <option value="1">1x</option>
+              <option value="2" selected>2x - recommended</option>
+              <option value="3">3x - slow but sturdy</option>
+            </select>
+          </div>
+
+          <label class="check-row">
+            <input id="useCompression" type="checkbox" checked />
+            <span>Compress with gzip</span>
+          </label>
+
+          <div class="actions">
+            <button id="generateBtn" class="primary">Generate QR Frames</button>
+            <button id="stopBtn" class="secondary" disabled>Stop</button>
+          </div>
+
+          <div id="encodeStats" class="stats muted">No transfer generated yet.</div>
+        </section>
+      </div>
+
+      <section class="card qr-stage">
+        <h2>3. Animated QR</h2>
+        <div id="qrCanvasWrap" class="qr-wrap empty">QR frames will appear here</div>
+        <div class="progress-line">
+          <span id="frameCounter">Frame 0 / 0</span>
+          <span id="transferId">Transfer ID: none</span>
+        </div>
+        <div class="actions qr-actions">
+          <button id="displayModeBtn" class="primary">Large Display Mode</button>
+          <button id="pausePlayBtn" class="secondary">Play</button>
+          <button id="prevFrameBtn" class="secondary">Previous</button>
+          <button id="nextFrameBtn" class="secondary">Next</button>
+        </div>
+      </section>
+    </section>
+
+    <section id="decode" class="panel">
+      <div class="grid two">
+        <section class="card">
+          <h2>1. Scan</h2>
+          <p class="muted">Point the camera at the animated QR. Missed frames are fine because the animation loops.</p>
+          <div class="actions">
+            <button id="startScanBtn" class="primary">Start Camera Scan</button>
+            <button id="stopScanBtn" class="secondary" disabled>Stop Scan</button>
+            <button id="resetScanBtn" class="secondary">Reset</button>
+          </div>
+          <div id="scannerStatus" class="scanner-status muted">Scanner is idle.</div>
+          <div id="scannerTelemetry" class="scanner-telemetry"></div>
+          <div id="reader"></div>
+          <details class="debug-panel" open>
+            <summary>Debug log</summary>
+            <pre id="debugLog">Debug log ready. Press Start Camera Scan to collect scanner details.\n</pre>
+          </details>
+        </section>
+
+        <section class="card">
+          <h2>2. Progress</h2>
+          <div id="decodeStats" class="stats muted">Waiting for QR frames.</div>
+          <div class="meter">
+            <div id="meterBar" class="meter-bar"></div>
+          </div>
+          <div id="missingChunks" class="missing"></div>
+        </section>
+      </div>
+
+      <section class="card">
+        <h2>3. Rebuilt Output</h2>
+        <div class="actions">
+          <button id="downloadBtn" class="primary" disabled>Download Rebuilt File</button>
+          <button id="copyBtn" class="secondary" disabled>Copy Text</button>
+        </div>
+        <textarea id="outputText" readonly placeholder="Decoded text will appear here after all chunks are collected."></textarea>
+      </section>
+    </section>
+  </main>
+
+  <button id="exitDisplayModeBtn" class="exit-display secondary">Exit Display</button>
+
+  <script src="libs/qrcode-local.js?v=debug10"></script>
+  <script src="libs/pako.min.js?v=debug10"></script>
+  <script src="libs/html5-qrcode.min.js?v=debug10"></script>
+  <script src="app.js?v=debug10"></script>
+</body>
+</html>

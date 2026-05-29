@@ -41,7 +41,7 @@ struct ContentView: View {
     private var header: some View {
         VStack(spacing: 2) {
             Text("AQR Transfer").font(.largeTitle.bold())
-            Text("Scan the animated QR on your computer screen")
+            Text("AQR2 / fountain codes — scan until complete")
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
@@ -83,16 +83,30 @@ struct ContentView: View {
 
     private var progressArea: some View {
         VStack(spacing: 8) {
-            ProgressView(value: Double(receiver.receivedCount),
-                         total: Double(max(receiver.total, 1)))
+            // Progress is now "blocks resolved out of K" rather than "chunks
+            // captured out of N". With fountain codes, every successful frame
+            // contributes useful information toward decoding — even though only
+            // some frames flip another block to "resolved", the rest sit in the
+            // pending pool and cascade later.
+            ProgressView(value: Double(receiver.resolvedCount),
+                         total: Double(max(receiver.K, 1)))
 
-            Text("\(receiver.receivedCount) / \(receiver.total) — \(receiver.statusText)")
+            Text("\(receiver.resolvedCount) / \(receiver.K) blocks  ·  \(receiver.framesSeen) frames seen")
                 .font(.system(.footnote, design: .monospaced))
                 .foregroundStyle(receiver.isComplete ? Color.green : Color.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            ChunkGrid(total: receiver.total,
-                      received: Set(0..<receiver.total).subtracting(receiver.missingIndices))
+            Text(receiver.statusText)
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if !receiver.isComplete && receiver.pendingEquations > 0 {
+                Text("\(receiver.pendingEquations) equations pending — keep scanning, they'll cascade")
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 

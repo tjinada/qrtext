@@ -1,0 +1,357 @@
+:root {
+  --bg: #0b1020;
+  --panel: #121a33;
+  --panel-2: #17213f;
+  --text: #edf2ff;
+  --muted: #9aa8c7;
+  --accent: #76e4f7;
+  --accent-2: #a78bfa;
+  --danger: #ff6b8a;
+  --ok: #48e5a4;
+  --border: rgba(255,255,255,.11);
+  --shadow: 0 20px 60px rgba(0,0,0,.35);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(118,228,247,.18), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(167,139,250,.16), transparent 35%),
+    var(--bg);
+}
+
+.app-shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 32px auto;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: center;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: linear-gradient(135deg, rgba(255,255,255,.08), rgba(255,255,255,.02));
+  box-shadow: var(--shadow);
+}
+
+h1, h2 { margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 4rem); letter-spacing: -0.06em; }
+h2 { font-size: 1.1rem; margin-bottom: 16px; }
+p { line-height: 1.55; }
+
+.badge {
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(118,228,247,.13);
+  color: var(--accent);
+  border: 1px solid rgba(118,228,247,.35);
+  font-weight: 700;
+}
+
+.tabs {
+  display: flex;
+  gap: 12px;
+  margin: 22px 0;
+}
+
+.tab, button {
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: rgba(255,255,255,.06);
+  padding: 12px 16px;
+  border-radius: 16px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.tab.active, .primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #09101e;
+  border-color: transparent;
+}
+
+.secondary { background: rgba(255,255,255,.08); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+
+.panel { display: none; }
+.panel.active { display: block; }
+.grid { display: grid; gap: 18px; }
+.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: rgba(18,26,51,.84);
+  padding: 22px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.field-label, .option-row label {
+  display: block;
+  color: var(--muted);
+  font-size: .9rem;
+  margin: 14px 0 8px;
+}
+
+input[type="text"], textarea, select, input[type="file"] {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+textarea {
+  min-height: 280px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0;
+  color: var(--muted);
+}
+
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.stats { line-height: 1.6; }
+.muted { color: var(--muted); }
+.qr-stage { margin-top: 18px; }
+.qr-wrap {
+  display: grid;
+  place-items: center;
+  min-height: 380px;
+  border: 1px dashed rgba(255,255,255,.22);
+  border-radius: 22px;
+  background: rgba(255,255,255,.04);
+  overflow: hidden;
+}
+.qr-wrap canvas, .qr-wrap img {
+  width: min(340px, 85vw) !important;
+  height: min(340px, 85vw) !important;
+  background: #fff;
+  border: 12px solid #fff;
+  border-radius: 10px;
+}
+.progress-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  color: var(--muted);
+}
+#reader {
+  margin-top: 16px;
+  overflow: hidden;
+  border-radius: 16px;
+}
+.meter {
+  height: 18px;
+  background: rgba(255,255,255,.08);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 16px 0;
+}
+.meter-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--ok));
+  transition: width .2s ease;
+}
+.missing {
+  color: var(--danger);
+  word-break: break-word;
+}
+
+@media (max-width: 780px) {
+  .grid.two { grid-template-columns: 1fr; }
+  .hero { align-items: flex-start; flex-direction: column; }
+  .progress-line { flex-direction: column; }
+}
+
+.scanner-video { width: 100%; max-width: 420px; border-radius: 16px; background: #000; }
+
+.ok { color: var(--ok); font-weight: 800; }
+.qr-actions { justify-content: center; }
+.qr-wrap canvas, .qr-wrap img {
+  width: min(620px, 86vw) !important;
+  height: min(620px, 86vw) !important;
+  background: #fff;
+  border: 24px solid #fff;
+  border-radius: 12px;
+  /* image-rendering: pixelated removed: when the canvas pixel buffer doesn't
+     match the CSS size exactly, nearest-neighbor scaling produces uneven
+     module widths (some 4px, neighbors 5px), which breaks QR decoders. Smooth
+     scaling preserves module proportions for the scanner. */
+}
+.qr-wrap {
+  min-height: min(760px, 92vh);
+  background: #050711;
+}
+.exit-display { display: none; }
+
+body.display-mode {
+  background: #000;
+  overflow: hidden;
+}
+body.display-mode .hero,
+body.display-mode .tabs,
+body.display-mode #encode > .grid,
+body.display-mode #decode,
+body.display-mode .qr-stage h2,
+body.display-mode .qr-actions,
+body.display-mode .card:not(.qr-stage) {
+  display: none !important;
+}
+body.display-mode .app-shell {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+}
+body.display-mode #encode,
+body.display-mode .panel.active,
+body.display-mode .qr-stage {
+  display: block !important;
+}
+body.display-mode .qr-stage {
+  margin: 0;
+  width: 100vw;
+  height: 100vh;
+  padding: 12px;
+  border: 0;
+  border-radius: 0;
+  background: #000;
+  box-shadow: none;
+}
+body.display-mode .qr-wrap {
+  min-height: calc(100vh - 76px);
+  border: 0;
+  border-radius: 0;
+  background: #000;
+}
+body.display-mode .qr-wrap canvas,
+body.display-mode .qr-wrap img {
+  width: min(88vw, 88vh) !important;
+  height: min(88vw, 88vh) !important;
+  border-width: 34px;
+  border-radius: 0;
+}
+body.display-mode .progress-line {
+  position: fixed;
+  left: 24px;
+  right: 24px;
+  bottom: 18px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.72);
+  color: #fff;
+  font-weight: 800;
+}
+body.display-mode .exit-display {
+  display: block;
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+}
+#reader video {
+  border-radius: 18px;
+  /* html5-qrcode injects this <video>. Without object-fit it letterboxes the
+     landscape sensor feed into the tall portrait container, wasting pixels and
+     looking 'rotated'. cover fills the box edge-to-edge without distortion. */
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+#reader {
+  /* Cap the scanner to a centered, near-square box instead of a tall portrait
+     letterbox. 4:3 maps the square scan region onto a denser part of the 720p
+     feed and keeps the QR comfortably inside the frame on phones. */
+  min-height: 0;
+  width: min(480px, 92vw);
+  aspect-ratio: 3 / 4;
+  margin: 16px auto 0;
+  background: #000;
+}
+#reader canvas {
+  /* Some html5-qrcode builds also overlay a canvas for the scan box; keep it
+     aligned with the cover-fitted video. */
+  object-fit: cover !important;
+}
+
+@media (max-width: 780px) {
+  .qr-wrap canvas, .qr-wrap img {
+    width: min(92vw, 520px) !important;
+    height: min(92vw, 520px) !important;
+    border-width: 18px;
+  }
+}
+
+.scanner-status {
+  margin: 0.75rem 0;
+  font-size: 0.95rem;
+}
+.scanner-status.error {
+  color: #b91c1c;
+  font-weight: 700;
+}
+.scanner-status.ok {
+  color: #166534;
+  font-weight: 700;
+}
+
+.scanner-telemetry {
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  background: rgba(0,0,0,0.22);
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  min-height: 0;
+}
+.scanner-telemetry:empty {
+  display: none;
+}
+.scanner-telemetry strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.debug-panel {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 14px;
+  background: rgba(0,0,0,0.28);
+  color: #dbeafe;
+}
+
+.debug-panel summary {
+  cursor: pointer;
+  font-weight: 800;
+  margin-bottom: 0.5rem;
+}
+
+#debugLog {
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+  color: #dbeafe;
+}

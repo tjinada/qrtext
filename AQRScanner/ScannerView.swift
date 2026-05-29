@@ -60,6 +60,11 @@ struct ScannerView: UIViewControllerRepresentable {
 
 /// Convenience check the UI can use to show a friendly message on unsupported
 /// hardware instead of a blank camera.
+///
+/// Marked @MainActor because DataScannerViewController.isSupported / .isAvailable
+/// are main-actor-isolated (they're UIKit). ContentView reads this from the main
+/// actor, so this is safe.
+@MainActor
 enum ScannerAvailability {
     static var isSupported: Bool {
         DataScannerViewController.isSupported && DataScannerViewController.isAvailable
