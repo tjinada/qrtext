@@ -8,11 +8,8 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 14) {
             header
-
             scannerArea
-
             progressArea
-
             controls
 
             if let text = receiver.rebuiltText {
@@ -41,7 +38,7 @@ struct ContentView: View {
     private var header: some View {
         VStack(spacing: 2) {
             Text("AQR Transfer").font(.largeTitle.bold())
-            Text("AQR2 / fountain codes — scan until complete")
+            Text("AQR3 / sectioned fountain codes — scan section by section")
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
@@ -83,30 +80,27 @@ struct ContentView: View {
 
     private var progressArea: some View {
         VStack(spacing: 8) {
-            // Progress is now "blocks resolved out of K" rather than "chunks
-            // captured out of N". With fountain codes, every successful frame
-            // contributes useful information toward decoding — even though only
-            // some frames flip another block to "resolved", the rest sit in the
-            // pending pool and cascade later.
-            ProgressView(value: Double(receiver.resolvedCount),
-                         total: Double(max(receiver.K, 1)))
+            // Sections banked out of total. With fountain codes each section
+            // finishes once enough of ITS frames arrive (any order); the phone
+            // verifies and saves it, so progress survives closing the app.
+            ProgressView(value: Double(receiver.doneSections.count),
+                         total: Double(max(receiver.secs, 1)))
 
-            Text("\(receiver.resolvedCount) / \(receiver.K) blocks  ·  \(receiver.framesSeen) frames seen")
+            Text(receiver.secs > 0
+                 ? "\(receiver.doneSections.count) / \(receiver.secs) sections  ·  \(receiver.fileName)"
+                 : "Waiting for the first frame…")
                 .font(.system(.footnote, design: .monospaced))
                 .foregroundStyle(receiver.isComplete ? Color.green : Color.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+            SectionGrid(secs: receiver.secs,
+                        done: receiver.doneSections,
+                        inProgress: receiver.inProgress)
+
             Text(receiver.statusText)
-                .font(.system(.footnote, design: .monospaced))
+                .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-            if !receiver.isComplete && receiver.pendingEquations > 0 {
-                Text("\(receiver.pendingEquations) equations pending — keep scanning, they'll cascade")
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
         }
     }
 
@@ -128,6 +122,46 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
+            } else if receiver.allReady {
+                Button("Recombine") {
+                    receiver.recombine()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+            }
+        }
+    }
+}
+
+/// One pill per section: green ✓ when banked, orange % while decoding, grey —
+/// when untouched. The frontier tells you which section to keep scanning.
+struct SectionGrid: View {
+    let secs: Int
+    let done: Set<Int>
+    let inProgress: [Int: Double]
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 5)
+
+    var body: some View {
+        if secs > 0 {
+            LazyVGrid(columns: columns, spacing: 6) {
+                ForEach(0..<secs, id: \.self) { s in
+                    let isDone = done.contains(s)
+                    let frac = inProgress[s] ?? 0
+                    VStack(spacing: 1) {
+                        Text("S\(s + 1)")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(isDone ? "✓" : (frac > 0 ? "\(Int(frac * 100))%" : "—"))
+                            .font(.system(size: 9, design: .monospaced))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(isDone ? Color.green.opacity(0.85)
+                                       : (frac > 0 ? Color.orange.opacity(0.28)
+                                                   : Color.secondary.opacity(0.18)))
+                    .foregroundStyle(isDone ? Color.black : Color.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
             }
         }
     }

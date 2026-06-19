@@ -1,21 +1,26 @@
 import Foundation
 import CryptoKit
 
-/// One decoded AQR2 frame. Mirrors the object returned by parseFrame() in the
-/// web app (app.debug4.js, debug9).
+/// One decoded AQR3 frame. Mirrors parseFrame() in client/app.js (debug12).
 ///
 /// Wire format:
-///   AQR2|id|seed|K|totalBytes|alg|fileHash|nameB64|mimeB64|xorPayloadB64
+///   AQR3|id|sec|secs|seed|K|secBytes|secHash|alg|fileHash|nameB64|mimeB64|xorPayloadB64
 ///
-/// name/mime/xorPayload are base64url so they can never contain the "|"
-/// delimiter. seed/K/totalBytes are decimal integers.
-struct AQR2Frame {
+/// A file is gzipped, then split into `secs` contiguous sections; each section
+/// is its own independent LT stream. `sec`/`secs` route the frame; `seed`/`K`/
+/// `secBytes` are this section's LT params; `secHash` verifies the section the
+/// moment its decode completes; `fileHash`/`name`/`mime`/`alg` are whole-file.
+/// name/mime/xorPayload are base64url so they never contain the "|" delimiter.
+struct AQR3Frame {
     let id: String
+    let sec: Int
+    let secs: Int
     let seed: UInt32
     let K: Int
-    let totalBytes: Int
+    let secBytes: Int
+    let secHash: String
     let alg: String        // "gzip" | "raw"
-    let fileHash: String   // full-file SHA-256 (hex)
+    let fileHash: String   // whole-file SHA-256 (hex)
     let name: String
     let mime: String
     let xorB64: String     // base64url-encoded XOR payload
@@ -27,7 +32,6 @@ enum FrameParser {
 
     // MARK: base64url
 
-    /// Mirror of base64UrlDecode() in app.js.
     static func base64urlDecode(_ s: String) -> Data? {
         var str = s
             .replacingOccurrences(of: "-", with: "+")
@@ -39,7 +43,6 @@ enum FrameParser {
         return Data(base64Encoded: str)
     }
 
-    /// Mirror of decodeString() in app.js (base64url -> UTF-8 String).
     static func decodeString(_ s: String) -> String {
         guard let d = base64urlDecode(s) else { return "" }
         return String(data: d, encoding: .utf8) ?? ""
@@ -47,28 +50,33 @@ enum FrameParser {
 
     // MARK: parsing
 
-    /// Mirror of parseFrame(). Returns nil for anything that isn't a well-formed
-    /// AQR2 frame (random QR codes, malformed payloads, non-numeric seed/K).
-    static func parse(_ text: String) -> AQR2Frame? {
-        guard text.hasPrefix("AQR2|") else { return nil }
+    /// Returns nil for anything that isn't a well-formed AQR3 frame.
+    static func parse(_ text: String) -> AQR3Frame? {
+        guard text.hasPrefix("AQR3|") else { return nil }
         let parts = text.components(separatedBy: "|")
-        guard parts.count == 10 else { return nil }
-        // parts[0] == "AQR2"
-        let id = parts[1]
-        guard let seed = UInt32(parts[2]), seed > 0 else { return nil }
-        guard let K = Int(parts[3]), K >= 2 else { return nil }
-        guard let totalBytes = Int(parts[4]), totalBytes > 0 else { return nil }
+        guard parts.count == 13 else { return nil }
 
-        return AQR2Frame(
+        let id = parts[1]
+        guard let sec = Int(parts[2]),
+              let secs = Int(parts[3]),
+              let seed = UInt32(parts[4]),
+              let K = Int(parts[5]),
+              let secBytes = Int(parts[6]) else { return nil }
+        guard secs > 0, sec >= 0, sec < secs, seed > 0, K >= 2, secBytes > 0 else { return nil }
+
+        return AQR3Frame(
             id: id,
+            sec: sec,
+            secs: secs,
             seed: seed,
             K: K,
-            totalBytes: totalBytes,
-            alg: parts[5],
-            fileHash: parts[6],
-            name: decodeString(parts[7]),
-            mime: decodeString(parts[8]),
-            xorB64: parts[9]
+            secBytes: secBytes,
+            secHash: parts[7],
+            alg: parts[8],
+            fileHash: parts[9],
+            name: decodeString(parts[10]),
+            mime: decodeString(parts[11]),
+            xorB64: parts[12]
         )
     }
 

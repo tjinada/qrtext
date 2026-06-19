@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Animated QR Transfer</title>
-  <link rel="stylesheet" href="styles.css?v=debug10" />
+  <link rel="stylesheet" href="styles.css?v=debug12" />
 </head>
 <body>
   <main class="app-shell">
@@ -13,7 +13,7 @@
         <h1>Animated QR Transfer</h1>
         <p>Turn text or files into looping QR frames, then scan them back into the original file.</p>
       </div>
-      <div class="badge">MVP · debug10 · AQR2/LT</div>
+      <div class="badge">MVP · debug12 · AQR3/LT</div>
     </header>
 
     <nav class="tabs" aria-label="Main tabs">
@@ -38,14 +38,24 @@
         <section class="card">
           <h2>2. Options</h2>
           <div class="option-row">
-            <label for="chunkSize">K (source blocks)</label>
-            <select id="chunkSize">
-              <option value="8">8 — very dense QR, tiny file only</option>
-              <option value="16">16 — dense</option>
-              <option value="24" selected>24 — balanced (recommended)</option>
-              <option value="32">32 — looser, easier to scan</option>
-              <option value="48">48 — small QR, more frames</option>
-              <option value="64">64 — smallest QR per frame</option>
+            <label for="blockTarget">Frame size</label>
+            <select id="blockTarget">
+              <option value="700">Small QR — easiest scan, most frames</option>
+              <option value="1100">Balanced</option>
+              <option value="1400" selected>Recommended — auto K</option>
+              <option value="1800">Dense — fewest frames, hardest scan</option>
+            </select>
+          </div>
+
+          <div class="option-row">
+            <label for="sections">Split into sections</label>
+            <select id="sections">
+              <option value="auto" selected>Auto (by file size)</option>
+              <option value="1">1 — single stream</option>
+              <option value="2">2 sections</option>
+              <option value="4">4 sections</option>
+              <option value="8">8 sections</option>
+              <option value="16">16 sections</option>
             </select>
           </div>
 
@@ -95,6 +105,13 @@
           <button id="prevFrameBtn" class="secondary">Previous</button>
           <button id="nextFrameBtn" class="secondary">Next</button>
         </div>
+        <div class="section-line">
+          <span id="sectionLabel">No sections</span>
+        </div>
+        <div class="actions qr-actions">
+          <button id="prevSectionBtn" class="secondary" disabled>◀ Prev Section</button>
+          <button id="nextSectionBtn" class="secondary" disabled>Next Section ▶</button>
+        </div>
       </section>
     </section>
 
@@ -140,9 +157,9 @@
 
   <button id="exitDisplayModeBtn" class="exit-display secondary">Exit Display</button>
 
-  <script src="libs/qrcode-local.js?v=debug10"></script>
-  <script src="libs/pako.min.js?v=debug10"></script>
-  <script src="libs/html5-qrcode.min.js?v=debug10"></script>
-  <script src="app.js?v=debug10"></script>
+  <script src="libs/qrcode-local.js?v=debug12"></script>
+  <script src="libs/pako.min.js?v=debug12"></script>
+  <script src="libs/html5-qrcode.min.js?v=debug12"></script>
+  <script src="app.js?v=debug12"></script>
 </body>
 </html>

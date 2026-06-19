@@ -183,6 +183,13 @@ textarea {
 
 .ok { color: var(--ok); font-weight: 800; }
 .qr-actions { justify-content: center; }
+.section-line {
+  text-align: center;
+  margin-top: 12px;
+  color: var(--accent);
+  font-weight: 700;
+}
+body.display-mode .section-line { display: none !important; }
 .qr-wrap canvas, .qr-wrap img {
   width: min(620px, 86vw) !important;
   height: min(620px, 86vw) !important;

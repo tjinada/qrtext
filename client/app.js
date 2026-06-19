@@ -1,17 +1,20 @@
-const BUILD_ID = "debug10-2026-05-27";
+const BUILD_ID = "debug12-2026-06-18";
 const $ = (id) => document.getElementById(id);
 
 const state = {
-  // AQR2 frame generator state (replaces the old fixed frames[]/frameIndex loop)
-  ltGenerator: null,        // { nextFrame(), K, transferId, blockSize, totalBytes }
-  frameSeq: 0,              // monotonically increasing count of frames emitted so far
-  lastBuiltFrame: "",       // most recently rendered AQR2 frame string
+  // AQR3 section generators. Each section is an independent LT stream; the user
+  // displays one section at a time and the phone banks each as it completes.
+  sections: [],             // [{ sec, secs, K, secBytes, secHash, blocks, generator }]
+  activeSection: 0,
+  frameSeq: 0,              // frames emitted in the active section (display only)
+  lastBuiltFrame: "",       // most recently rendered AQR3 frame string
   intervalId: null,
   scanner: null,
   videoStream: null,
   scanTimer: null,
   detector: null,
-  decoder: null,            // LTDecoder instance for the on-page decoder (web-side decode for testing)
+  sectionDecoders: {},      // sec -> LTDecoder (in-progress sections, web test decoder)
+  sectionBytes: {},         // sec -> Uint8Array (completed + verified section bytes)
   activeTransfer: null,
   rebuiltBlob: null,
   rebuiltText: "",
@@ -234,15 +237,21 @@ function splitIntoKBlocks(payload, K) {
   return { blocks, blockSize };
 }
 
-// Build an LT frame generator that emits successive AQR2 frame strings.
-// `frameSeed` is incremented per frame; seeds 1, 2, 3, ... feed mulberry32.
-function makeLTGenerator({ id, alg, K, fileHash, totalBytes, name, mime, blocks }) {
+// Build an AQR3 frame generator for ONE section. Each section is an independent
+// LT stream; seeds 1,2,3,... feed mulberry32. `sec`/`secs` route the frame to
+// the right section on the receiver; `secHash` lets the receiver verify the
+// section the moment its LT decode completes.
+function makeAQR3Generator({ id, sec, secs, alg, K, fileHash, secBytes, secHash, name, mime, blocks }) {
   let seed = 0;
   return {
+    sec,
+    secs,
     K,
     transferId: id,
     blockSize: blocks[0].length,
-    totalBytes,
+    totalBytes: secBytes,    // alias used by the LT sanity check + decoder
+    secBytes,
+    secHash,
     nextFrame() {
       seed = (seed + 1) >>> 0;
       const rng = mulberry32(seed);
@@ -250,14 +259,16 @@ function makeLTGenerator({ id, alg, K, fileHash, totalBytes, name, mime, blocks 
       const indices = pickIndices(rng, K, degree);
       const xor = xorBlocks(blocks, indices);
       const xorB64 = base64UrlEncode(xor);
-      // Wire format AQR2:
-      //   AQR2|id|seed|K|totalBytes|alg|fileHash|nameB64|mimeB64|xorPayloadB64
+      // AQR3|id|sec|secs|seed|K|secBytes|secHash|alg|fileHash|nameB64|mimeB64|xorPayloadB64
       return [
-        "AQR2",
+        "AQR3",
         id,
+        sec,
+        secs,
         seed,
         K,
-        totalBytes,
+        secBytes,
+        secHash,
         alg,
         fileHash,
         encodeString(name),
@@ -266,6 +277,21 @@ function makeLTGenerator({ id, alg, K, fileHash, totalBytes, name, mime, blocks 
       ].join("|");
     }
   };
+}
+
+// Split the processed (gzipped) payload into `secs` contiguous slices. Each
+// slice becomes its own independent LT stream / section. Returns the actual
+// slices (may be fewer than requested if the file is tiny).
+function sliceIntoSections(processedBytes, secs) {
+  const out = [];
+  const secLen = Math.ceil(processedBytes.length / secs);
+  for (let s = 0; s < secs; s++) {
+    const start = s * secLen;
+    if (start >= processedBytes.length) break;
+    const end = Math.min(start + secLen, processedBytes.length);
+    out.push(processedBytes.subarray(start, end));
+  }
+  return out;
 }
 
 // =============================================================================
@@ -432,42 +458,31 @@ async function readInput() {
   };
 }
 
-function buildAQR2Frame(meta, seed, xorB64) {
-  // Wire format:
-  //   AQR2|id|seed|K|totalBytes|alg|fileHash|nameB64|mimeB64|xorPayloadB64
-  return [
-    "AQR2",
-    meta.id,
-    seed,
-    meta.K,
-    meta.totalBytes,
-    meta.alg,
-    meta.fileHash,
-    encodeString(meta.name),
-    encodeString(meta.mime),
-    xorB64
-  ].join("|");
-}
-
 function parseFrame(decodedText) {
-  // Only AQR2 is accepted. Anything else (random QR, old AQR1, JSON, gibberish)
-  // returns null and the caller drops it.
-  if (!decodedText.startsWith("AQR2|")) return null;
+  // Only AQR3 is accepted. Anything else (random QR, old AQR1/AQR2, JSON,
+  // gibberish) returns null and the caller drops it.
+  if (!decodedText.startsWith("AQR3|")) return null;
   const parts = decodedText.split("|");
-  if (parts.length !== 10) return null;
-  const [, id, seedStr, KStr, totalBytesStr, alg, fileHash, nameB64, mimeB64, xorB64] = parts;
+  if (parts.length !== 13) return null;
+  // AQR3|id|sec|secs|seed|K|secBytes|secHash|alg|fileHash|nameB64|mimeB64|xorB64
+  const [, id, secStr, secsStr, seedStr, KStr, secBytesStr, secHash, alg, fileHash, nameB64, mimeB64, xorB64] = parts;
+  const sec = Number(secStr);
+  const secs = Number(secsStr);
   const seed = Number(seedStr);
   const K = Number(KStr);
-  const totalBytes = Number(totalBytesStr);
-  if (!Number.isFinite(seed) || !Number.isFinite(K) || !Number.isFinite(totalBytes)) return null;
-  if (seed <= 0 || K <= 0 || totalBytes <= 0) return null;
+  const secBytes = Number(secBytesStr);
+  if (![sec, secs, seed, K, secBytes].every(Number.isFinite)) return null;
+  if (secs <= 0 || sec < 0 || sec >= secs || seed <= 0 || K <= 0 || secBytes <= 0) return null;
   return {
     qrt: "aqr-transfer",
-    v: 3,
+    v: 4,
     id,
+    sec,
+    secs,
     seed,
     K,
-    totalBytes,
+    secBytes,
+    secHash,
     alg,
     fileHash,
     name: decodeString(nameB64),
@@ -481,58 +496,115 @@ async function generateFrames() {
   const { bytes, name, mime } = await readInput();
   const useCompression = $("useCompression").checked;
   const processedBytes = useCompression ? pako.gzip(bytes) : bytes;
-
-  // `K` is now the number of source blocks, not the chunk character size. The
-  // dropdown is repurposed: lower K = bigger blocks per frame (denser QR, fewer
-  // frames needed), higher K = smaller blocks per frame (sparser QR, more
-  // frames needed but each QR is much easier to scan).
-  const K = Number($("chunkSize").value);
-  if (!Number.isFinite(K) || K < 2) throw new Error("K must be at least 2.");
-
+  const alg = useCompression ? "gzip" : "raw";
   const id = randomId();
   const fileHash = await sha256Hex(bytes);
-  const alg = useCompression ? "gzip" : "raw";
+  const targetBlock = Number($("blockTarget").value) || 1400;
 
-  const { blocks, blockSize } = splitIntoKBlocks(processedBytes, K);
-  state.ltGenerator = makeLTGenerator({
-    id,
-    alg,
-    K,
-    fileHash,
-    totalBytes: processedBytes.length,
-    name,
-    mime,
-    blocks
-  });
+  const MAX_FRAME_CHARS = 2280;   // ECC M v40 byte-mode capacity, with headroom
+  const K_MAX = 4000;
+
+  // Decide how many sections to split the (gzipped) payload into. Each section
+  // is an independent LT stream you scan and bank separately, so you don't have
+  // to hold the phone for one long session.
+  const secsChoice = $("sections").value;
+  let secs;
+  if (secsChoice === "auto") {
+    const SECTION_TARGET = 262144;   // ~256 KB gzipped per section
+    secs = Math.min(16, Math.max(1, Math.ceil(processedBytes.length / SECTION_TARGET)));
+  } else {
+    secs = Math.max(1, Number(secsChoice) || 1);
+  }
+
+  const slices = sliceIntoSections(processedBytes, secs);
+  secs = slices.length;   // actual (tiny files may yield fewer)
+
+  const sections = [];
+  for (let s = 0; s < secs; s++) {
+    const slice = slices[s];
+    const secHash = (await sha256Hex(slice)).slice(0, 16);
+
+    // Per-section auto-K so every section's frames fit a QR.
+    let K = Math.max(2, Math.ceil(slice.length / targetBlock));
+    if (K > K_MAX) {
+      throw new Error(`Section ${s + 1} needs ${K.toLocaleString()} blocks (> ${K_MAX}). Use more sections or enable gzip.`);
+    }
+    let blocks, blockSize, fits = false;
+    for (let attempt = 0; attempt < 24 && K <= K_MAX; attempt++) {
+      const split = splitIntoKBlocks(slice, K);
+      blocks = split.blocks;
+      blockSize = split.blockSize;
+      const probe = makeAQR3Generator({ id, sec: s, secs, alg, K, fileHash, secBytes: slice.length, secHash, name, mime, blocks });
+      if (probe.nextFrame().length <= MAX_FRAME_CHARS) { fits = true; break; }
+      K = Math.ceil(K * 1.3) + 1;
+    }
+    if (!fits) throw new Error(`Couldn't fit section ${s + 1} into scannable QR frames.`);
+
+    const generator = makeAQR3Generator({ id, sec: s, secs, alg, K, fileHash, secBytes: slice.length, secHash, name, mime, blocks });
+    // In-page LT round-trip sanity check for this section (catches PRNG/encoding
+    // drift before the phone ever sees it).
+    await sanityCheckLTRoundTrip(generator, slice, K);
+
+    sections.push({ sec: s, secs, K, secBytes: slice.length, secHash, blocks, generator });
+  }
+
+  state.sections = sections;
+  state.activeSection = 0;
   state.frameSeq = 0;
-  state.lastBuiltFrame = "";
-
-  // Sanity check the round-trip with a quick in-page LT decode so we catch any
-  // PRNG/encoding drift before the phone even sees it. ~K*1.5 frames is
-  // virtually always enough.
-  await sanityCheckLTRoundTrip(state.ltGenerator, processedBytes, K);
-
-  // Encode-side stats. "Frames" is now "frames to typically decode" — the LT
-  // overhead factor in practice for ideal soliton is ~1.5-2x for small K.
-  const xorPayloadChars = Math.ceil(blockSize * 4 / 3) + 4;  // rough b64url size + a bit
-  const sampleFrame = state.ltGenerator.nextFrame();         // we'll re-render this below
-  state.lastBuiltFrame = sampleFrame;
+  state.lastBuiltFrame = sections[0].generator.nextFrame();
   state.frameSeq = 1;
+
+  const totalK = sections.reduce((a, x) => a + x.K, 0);
   $("encodeStats").innerHTML = `
     Original: <strong>${bytes.length.toLocaleString()}</strong> bytes<br>
     Processed (post-gzip): <strong>${processedBytes.length.toLocaleString()}</strong> bytes<br>
-    K (source blocks): <strong>${K}</strong><br>
-    Block size: <strong>${blockSize.toLocaleString()}</strong> bytes<br>
-    Sample frame length: <strong>${sampleFrame.length.toLocaleString()}</strong> chars<br>
-    Algorithm: <strong>${alg}</strong><br>
-    QR settings: <strong>ECC M, margin 2, AQR2 / LT</strong><br>
-    <em>Frames are generated on the fly. Decoder finishes after ~${Math.ceil(K * 1.5)}–${Math.ceil(K * 2)} unique scans.</em>
+    Sections: <strong>${secs}</strong> &nbsp;·&nbsp; total blocks <strong>${totalK.toLocaleString()}</strong><br>
+    Section 1: <strong>K ${sections[0].K}</strong>, ${sections[0].secBytes.toLocaleString()} B<br>
+    Algorithm: <strong>${alg}</strong> &nbsp;·&nbsp; ECC M, AQR3 / LT<br>
+    <em>Scan one section at a time. Each finishes after ~1.5–2× its K unique frames; the phone banks each and recombines at the end.</em>
   `;
   $("transferId").textContent = `Transfer ID: ${id}`;
 
+  updateSectionLabel();
   await renderCurrentFrame();
   startAnimation();
 }
+
+// --- Section navigation (encoder) ---
+
+function activeGenerator() {
+  const sec = state.sections[state.activeSection];
+  return sec ? sec.generator : null;
+}
+
+function updateSectionLabel() {
+  const el = $("sectionLabel");
+  const secs = state.sections.length;
+  if (el) {
+    if (!secs) el.textContent = "No sections";
+    else if (secs === 1) el.textContent = "Single section";
+    else el.textContent = `Section ${state.activeSection + 1} / ${secs} — scan to completion, then advance`;
+  }
+  const prev = $("prevSectionBtn");
+  const next = $("nextSectionBtn");
+  const multi = secs > 1;
+  if (prev) prev.disabled = !multi || state.activeSection <= 0;
+  if (next) next.disabled = !multi || state.activeSection >= secs - 1;
+}
+
+async function gotoSection(idx) {
+  if (!state.sections.length) return;
+  state.activeSection = Math.max(0, Math.min(idx, state.sections.length - 1));
+  state.frameSeq = 0;
+  state.lastBuiltFrame = activeGenerator().nextFrame();
+  state.frameSeq = 1;
+  await renderCurrentFrame();
+  updateSectionLabel();
+  startAnimation();
+}
+
+function nextSection() { gotoSection(state.activeSection + 1); }
+function prevSection() { gotoSection(state.activeSection - 1); }
 
 // In-process round-trip test: feed the generator's output back into LTDecoder
 // and verify the resulting bytes match. Cheap insurance that the JS
@@ -575,7 +647,7 @@ async function sanityCheckLTRoundTrip(generator, expectedBytes, K) {
 async function renderCurrentFrame() {
   const wrap = $("qrCanvasWrap");
   wrap.innerHTML = "";
-  if (!state.ltGenerator || !state.lastBuiltFrame) {
+  if (!state.sections.length || !state.lastBuiltFrame) {
     wrap.textContent = "QR frames will appear here";
     wrap.classList.add("empty");
     return;
@@ -586,7 +658,9 @@ async function renderCurrentFrame() {
   canvas.className = "qr-canvas";
   wrap.appendChild(canvas);
   await QRCode.toCanvas(canvas, state.lastBuiltFrame, QR_OPTIONS);
-  $("frameCounter").textContent = `Frame seq ${state.frameSeq}`;
+  const secs = state.sections.length;
+  const secLabel = secs > 1 ? ` · Section ${state.activeSection + 1}/${secs}` : "";
+  $("frameCounter").textContent = `Frame seq ${state.frameSeq}${secLabel}`;
 }
 
 function advanceFrame() {
@@ -594,16 +668,17 @@ function advanceFrame() {
   // every `hold` ticks. Repeating gives the camera multiple decode windows on
   // the same QR, which is what makes scanning consistently fast.
   const hold = Number($("frameHold").value || 1);
-  if (!state.ltGenerator) return;
+  const gen = activeGenerator();
+  if (!gen) return;
   if (state.frameSeq % hold === 0 || !state.lastBuiltFrame) {
-    state.lastBuiltFrame = state.ltGenerator.nextFrame();
+    state.lastBuiltFrame = gen.nextFrame();
   }
   state.frameSeq++;
   renderCurrentFrame();
 }
 
 function startAnimation() {
-  if (!state.ltGenerator) return;
+  if (!state.sections.length) return;
   stopAnimation();
   const fps = Number($("fps").value);
   state.intervalId = setInterval(advanceFrame, 1000 / fps);
@@ -619,26 +694,28 @@ function stopAnimation() {
 }
 
 function togglePausePlay() {
-  if (!state.ltGenerator) return;
+  if (!state.sections.length) return;
   if (state.intervalId) stopAnimation();
   else startAnimation();
 }
 
 // Previous/Next in LT mode aren't "go back to frame N" — there's no frame N to
-// go back to. Instead, both buttons just emit a fresh LT frame so the user can
-// step through manually. This matches the AQR1 mental model closely enough.
+// go back to. Instead, both buttons just emit a fresh LT frame from the active
+// section so the user can step through manually.
 async function previousFrame() {
-  if (!state.ltGenerator) return;
+  const gen = activeGenerator();
+  if (!gen) return;
   stopAnimation();
-  state.lastBuiltFrame = state.ltGenerator.nextFrame();
+  state.lastBuiltFrame = gen.nextFrame();
   state.frameSeq++;
   await renderCurrentFrame();
 }
 
 async function nextFrame() {
-  if (!state.ltGenerator) return;
+  const gen = activeGenerator();
+  if (!gen) return;
   stopAnimation();
-  state.lastBuiltFrame = state.ltGenerator.nextFrame();
+  state.lastBuiltFrame = gen.nextFrame();
   state.frameSeq++;
   await renderCurrentFrame();
 }
@@ -672,7 +749,8 @@ function openDisplayMode() {
 
 
 function resetDecode() {
-  state.decoder = null;
+  state.sectionDecoders = {};
+  state.sectionBytes = {};
   state.activeTransfer = null;
   state.rebuiltBlob = null;
   state.rebuiltText = "";
@@ -692,74 +770,102 @@ async function handleQrDecoded(decodedText) {
   const payload = parseFrame(decodedText);
   if (!payload || payload.qrt !== "aqr-transfer") return;
 
-  // New transfer? Reset and adopt its metadata.
+  // New transfer? Reset and adopt whole-file metadata.
   if (!state.activeTransfer || state.activeTransfer.id !== payload.id) {
     resetDecode();
     state.lastDecoded = decodedText;
     state.activeTransfer = {
       id: payload.id,
-      K: payload.K,
-      totalBytes: payload.totalBytes,
+      secs: payload.secs,
       name: payload.name,
       mime: payload.mime,
       alg: payload.alg,
-      fileHash: payload.fileHash
+      fileHash: payload.fileHash,
+      secsDone: new Set()
     };
-    // Decoder needs the actual block size, which we infer from this first frame.
-    const firstXor = base64UrlDecode(payload.xorB64);
-    state.decoder = new LTDecoder({
-      K: payload.K,
-      blockSize: firstXor.length,
-      totalBytes: payload.totalBytes
-    });
   }
 
   if (payload.id !== state.activeTransfer.id) return;
-  if (!state.decoder) return;
+
+  const sec = payload.sec;
+  if (state.sectionBytes[sec]) { updateDecodeProgress(); return; }   // already banked
+
+  // One LT decoder per section; created on first sight of that section.
+  let dec = state.sectionDecoders[sec];
+  if (!dec) {
+    const firstXor = base64UrlDecode(payload.xorB64);
+    dec = new LTDecoder({ K: payload.K, blockSize: firstXor.length, totalBytes: payload.secBytes });
+    dec.secHash = payload.secHash;
+    state.sectionDecoders[sec] = dec;
+  }
 
   const xor = base64UrlDecode(payload.xorB64);
-  state.decoder.addEquation(payload.seed, xor);
+  if (xor.length !== dec.blockSize) return;
+  dec.addEquation(payload.seed, xor);
+
+  if (dec.isComplete()) {
+    const secBytesArr = dec.rebuild();
+    const gotHash = (await sha256Hex(secBytesArr)).slice(0, 16);
+    if (gotHash === dec.secHash) {
+      state.sectionBytes[sec] = secBytesArr;          // bank the verified section
+      state.activeTransfer.secsDone.add(sec);
+    }
+    delete state.sectionDecoders[sec];                 // free it either way; rescan to retry
+  }
+
   updateDecodeProgress();
 
-  if (state.decoder.isComplete()) {
+  if (state.activeTransfer.secsDone.size === state.activeTransfer.secs) {
     await rebuildTransfer();
   }
 }
 
 function updateDecodeProgress() {
   const meta = state.activeTransfer;
-  const dec = state.decoder;
-  if (!meta || !dec) return;
-  const pct = Math.round((dec.resolvedCount / dec.K) * 100);
-  $("meterBar").style.width = `${pct}%`;
+  if (!meta) return;
+  const done = meta.secsDone.size;
+  $("meterBar").style.width = `${Math.round((done / meta.secs) * 100)}%`;
+
+  // Per-section line: ✓ banked, % in-progress, — untouched.
+  const cells = [];
+  for (let s = 0; s < meta.secs; s++) {
+    if (state.sectionBytes[s]) {
+      cells.push(`S${s + 1} ✓`);
+    } else if (state.sectionDecoders[s]) {
+      const d = state.sectionDecoders[s];
+      cells.push(`S${s + 1} ${Math.round((d.resolvedCount / d.K) * 100)}%`);
+    } else {
+      cells.push(`S${s + 1} —`);
+    }
+  }
 
   $("decodeStats").innerHTML = `
     Transfer ID: <strong>${meta.id}</strong><br>
     File: <strong>${meta.name}</strong><br>
-    Blocks resolved: <strong>${dec.resolvedCount} / ${dec.K}</strong><br>
-    Frames seen: <strong>${dec.equationsSeen}</strong><br>
-    Pending equations: <strong>${dec.pending.length}</strong><br>
+    Sections banked: <strong>${done} / ${meta.secs}</strong><br>
     Algorithm: <strong>${meta.alg}</strong>
   `;
-  $("missingChunks").textContent = dec.isComplete()
-    ? "All blocks resolved."
-    : `${dec.K - dec.resolvedCount} blocks still unknown. Keep scanning.`;
+  $("missingChunks").textContent = cells.join("   ");
 }
 
 async function rebuildTransfer() {
   const meta = state.activeTransfer;
-  const dec = state.decoder;
-  if (!meta || !dec || !dec.isComplete()) return;
+  if (!meta || meta.secsDone.size !== meta.secs) return;
 
-  let bytes = dec.rebuild();
-  if (!bytes) {
-    $("missingChunks").textContent = "Decoder reported complete but rebuild returned null.";
-    return;
+  // Concatenate section payloads in order to reproduce the processed bytes.
+  let totalLen = 0;
+  for (let s = 0; s < meta.secs; s++) totalLen += state.sectionBytes[s].length;
+  const processed = new Uint8Array(totalLen);
+  let off = 0;
+  for (let s = 0; s < meta.secs; s++) {
+    processed.set(state.sectionBytes[s], off);
+    off += state.sectionBytes[s].length;
   }
 
+  let bytes = processed;
   if (meta.alg === "gzip") {
     try {
-      bytes = pako.ungzip(bytes);
+      bytes = pako.ungzip(processed);
     } catch (err) {
       $("missingChunks").textContent = `Gunzip failed: ${formatError(err)}`;
       return;
@@ -768,7 +874,7 @@ async function rebuildTransfer() {
 
   const finalHash = await sha256Hex(bytes);
   if (finalHash !== meta.fileHash) {
-    $("missingChunks").textContent = "Checksum failed. Reset and try again.";
+    $("missingChunks").textContent = "Whole-file checksum failed. Reset and try again.";
     return;
   }
 
@@ -784,7 +890,7 @@ async function rebuildTransfer() {
   }
 
   $("downloadBtn").disabled = false;
-  $("decodeStats").innerHTML += `<br><span class="ok">Checksum passed. Transfer complete.</span>`;
+  $("decodeStats").innerHTML += `<br><span class="ok">All ${meta.secs} section(s) received. Checksum passed.</span>`;
 }
 
 function sleep(ms) {
@@ -1321,6 +1427,8 @@ $("stopBtn").addEventListener("click", stopAnimation);
 $("pausePlayBtn").addEventListener("click", togglePausePlay);
 $("prevFrameBtn").addEventListener("click", previousFrame);
 $("nextFrameBtn").addEventListener("click", nextFrame);
+$("prevSectionBtn")?.addEventListener("click", prevSection);
+$("nextSectionBtn")?.addEventListener("click", nextSection);
 $("displayModeBtn").addEventListener("click", openDisplayMode);
 $("exitDisplayModeBtn").addEventListener("click", () => toggleDisplayMode(false));
 $("startScanBtn").addEventListener("click", () => startScanner());
@@ -1333,6 +1441,16 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && state.displayMode) toggleDisplayMode(false);
   if (event.key === "ArrowLeft") previousFrame();
   if (event.key === "ArrowRight") nextFrame();
+  // Up/Down switch sections — works in fullscreen Large Display Mode where the
+  // on-screen section buttons are hidden.
+  if (event.key === "ArrowUp" && document.activeElement?.tagName !== "TEXTAREA") {
+    event.preventDefault();
+    prevSection();
+  }
+  if (event.key === "ArrowDown" && document.activeElement?.tagName !== "TEXTAREA") {
+    event.preventDefault();
+    nextSection();
+  }
   if (event.key === " " && document.activeElement?.tagName !== "TEXTAREA") {
     event.preventDefault();
     togglePausePlay();
