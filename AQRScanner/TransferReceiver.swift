@@ -109,7 +109,7 @@ final class SectionReceiver {
 
     // MARK: recombine
 
-    func recombine() -> LTResult {
+    func recombine(progress: (Double) -> Void) -> LTResult {
         guard let id = activeId, secs > 0 else {
             return LTResult(fileURL: nil, text: nil, statusText: "Nothing to recombine.", success: false)
         }
@@ -125,20 +125,25 @@ final class SectionReceiver {
                                 statusText: "Section \(s + 1) missing on disk.", success: false)
             }
             processed.append(part)
+            progress(0.6 * Double(s + 1) / Double(secs))      // 0 -> 0.6 reading sections
         }
 
         var bytes = processed
         if alg == "gzip" {
+            progress(0.65)
             do { bytes = try Gzip.gunzip(processed) }
             catch {
                 return LTResult(fileURL: nil, text: nil,
                                 statusText: "Gunzip failed: \(error).", success: false)
             }
         }
+        progress(0.85)
+
         guard FrameParser.sha256Hex(bytes) == fileHash else {
             return LTResult(fileURL: nil, text: nil,
                             statusText: "Whole-file checksum failed.", success: false)
         }
+        progress(0.95)
 
         let safeName = name.isEmpty ? "transfer.bin" : name
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(safeName)
@@ -153,6 +158,7 @@ final class SectionReceiver {
             text = String(data: bytes, encoding: .utf8)
         }
         store.clear(id: id)   // banked sections no longer needed once recombined
+        progress(1.0)
         return LTResult(fileURL: url, text: text, statusText: "Complete — \(safeName)", success: true)
     }
 
@@ -192,30 +198,56 @@ final class TransferReceiver: ObservableObject {
     @Published var inProgress: [Int: Double] = [:]
     @Published var allReady = false
     @Published var isComplete = false
+    @Published var isRecombining = false
+    @Published var recombineProgress: Double = 0
     @Published var rebuiltURL: URL?
     @Published var rebuiltText: String?
 
     private let engine = SectionReceiver()
     private let queue = DispatchQueue(label: "aqr.section.engine", qos: .userInitiated)
 
+    // Gate for the ingest flood. Once every section is banked (or a recombine is
+    // requested) we stop accepting frames, so already-queued ingest blocks bail
+    // at the top instead of piling up ahead of the recombine block. Without this,
+    // the camera keeps firing frames onto the same serial queue and recombine
+    // can wait minutes behind the backlog.
+    private let gate = NSLock()
+    private var accepting = true
+
+    private func setAccepting(_ v: Bool) {
+        gate.lock(); accepting = v; gate.unlock()
+    }
+    private func isAccepting() -> Bool {
+        gate.lock(); defer { gate.unlock() }; return accepting
+    }
+
     func ingest(_ text: String) {
+        guard isAccepting() else { return }                 // don't even queue once captured
         queue.async { [weak self] in
             guard let self = self else { return }
+            guard self.isAccepting() else { return }        // drain any backlog cheaply
             guard let p = self.engine.ingest(text) else { return }
             DispatchQueue.main.async { self.apply(p) }
         }
     }
 
     func recombine() {
+        guard !isRecombining else { return }
+        setAccepting(false)            // stop the flood so this runs immediately
+        isRecombining = true
+        recombineProgress = 0
         statusText = "Recombining…"
         queue.async { [weak self] in
             guard let self = self else { return }
-            let r = self.engine.recombine()
+            let r = self.engine.recombine(progress: { frac in
+                DispatchQueue.main.async { self.recombineProgress = frac }
+            })
             DispatchQueue.main.async { self.applyResult(r) }
         }
     }
 
     func reset() {
+        setAccepting(true)
         queue.async { [weak self] in self?.engine.reset(clearDisk: false) }
         secs = 0
         fileName = ""
@@ -224,6 +256,8 @@ final class TransferReceiver: ObservableObject {
         inProgress = [:]
         allReady = false
         isComplete = false
+        isRecombining = false
+        recombineProgress = 0
         rebuiltURL = nil
         rebuiltText = nil
     }
@@ -235,12 +269,17 @@ final class TransferReceiver: ObservableObject {
         fileName = p.fileName
         doneSections = p.done
         inProgress = p.inProgress
+        if p.allReady && !allReady {
+            setAccepting(false)        // capture complete — stop the camera flood
+        }
         allReady = p.allReady
-        if !isComplete { statusText = p.statusText }
+        if !isComplete && !isRecombining { statusText = p.statusText }
         if p.contributed { Haptics.tick() }
     }
 
     private func applyResult(_ r: LTResult) {
+        isRecombining = false
+        recombineProgress = r.success ? 1.0 : 0.0
         statusText = r.statusText
         if r.success {
             rebuiltURL = r.fileURL

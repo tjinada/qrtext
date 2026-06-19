@@ -28,6 +28,11 @@ struct ContentView: View {
             Spacer(minLength: 0)
         }
         .padding()
+        .onChange(of: receiver.allReady) { ready in
+            // Every section is banked — stop the camera so it stops flooding the
+            // decode queue, which is what made Recombine appear to hang.
+            if ready { scanning = false }
+        }
         .sheet(isPresented: $showShare) {
             if let url = receiver.rebuiltURL {
                 ShareSheet(items: [url])
@@ -101,6 +106,17 @@ struct ContentView: View {
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            if receiver.isRecombining {
+                VStack(spacing: 3) {
+                    ProgressView(value: receiver.recombineProgress)
+                        .tint(.blue)
+                    Text("Recombining \(Int(receiver.recombineProgress * 100))%")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 2)
+            }
         }
     }
 
@@ -123,11 +139,12 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
             } else if receiver.allReady {
-                Button("Recombine") {
+                Button(receiver.isRecombining ? "Recombining…" : "Recombine") {
                     receiver.recombine()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
+                .disabled(receiver.isRecombining)
             }
         }
     }
