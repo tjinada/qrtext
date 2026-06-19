@@ -153,9 +153,22 @@ final class SectionReceiver {
                             statusText: "Couldn't write file: \(error)", success: false)
         }
 
+        // Build only a CAPPED preview for inline display. SwiftUI's Text view
+        // chokes on multi-megabyte strings and freezes the main thread, so we
+        // never hand it the whole file — the full content is on disk (url) and
+        // goes out through the share sheet. This is what made a 2 MB JSON appear
+        // to "stick at 95%": recombine had finished, but rendering the full
+        // string as Text wedged the UI.
         var text: String? = nil
         if mime.hasPrefix("text/") || SectionReceiver.isTextyExtension(safeName) {
-            text = String(data: bytes, encoding: .utf8)
+            let previewCap = 8000
+            if bytes.count <= previewCap {
+                text = String(decoding: bytes, as: UTF8.self)
+            } else {
+                let head = bytes.prefix(previewCap)
+                text = String(decoding: head, as: UTF8.self)
+                    + "\n\n… (truncated preview — use Save / Share for the full \(bytes.count) bytes)"
+            }
         }
         store.clear(id: id)   // banked sections no longer needed once recombined
         progress(1.0)
